@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Télécommande IMU - TinyML</title>
+</head>
+<body>
+    <h2>Démo TinyML ESP32</h2>
+    <button id="btnConnect">Se connecter à l'ESP32 (Bluetooth)</button>
+    <button id="btnSensors" style="display:none;">Autoriser les Capteurs (IMU)</button>
+    <p id="status">Statut : Déconnecté</p>
+    <p id="dataOut">X: 0.00 | Y: 0.00 | Z: 0.00</p>
+
+    <script>
+        // Les mêmes UUIDs que dans l'ESP32
+        const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+        const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+        
+        let bleCharacteristic;
+        let lastSendTime = 0;
+
+        document.getElementById('btnConnect').addEventListener('click', async () => {
+            try {
+                document.getElementById('status').innerText = "Recherche Bluetooth...";
+                // 1. Demande à l'utilisateur de choisir l'ESP32
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [SERVICE_UUID] }]
+                });
+                
+                // 2. Connexion au service et à la caractéristique
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                bleCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                
+                document.getElementById('status').innerText = "Connecté à l'ESP32 !";
+                document.getElementById('btnSensors').style.display = "block";
+            } catch(error) {
+                document.getElementById('status').innerText = "Erreur: " + error;
+            }
+        });
+
+        document.getElementById('btnSensors').addEventListener('click', () => {
+            // Demande de permission spécifique pour iOS 13+
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            startIMU();
+                        }
+                    }).catch(console.error);
+            } else {
+                startIMU(); // Navigateurs Android / PC
+            }
+        });
+
+        function startIMU() {
+            window.addEventListener('devicemotion', (event) => {
+                if (!bleCharacteristic) return;
+
+                // On limite l'envoi à 50Hz (toutes les 20ms) pour ne pas saturer le Bluetooth
+                let now = Date.now();
+                if (now - lastSendTime < 20) return; 
+                lastSendTime = now;
+
+                let x = event.accelerationIncludingGravity.x.toFixed(2);
+                let y = event.accelerationIncludingGravity.y.toFixed(2);
+                let z = event.accelerationIncludingGravity.z.toFixed(2);
+
+                document.getElementById('dataOut').innerText = `X: ${x} | Y: ${y} | Z: ${z}`;
+
+                // On crée une chaîne "X,Y,Z" et on l'envoie à l'ESP32
+                let dataString = `${x},${y},${z}\n`;
+                let encoder = new TextEncoder();
+                bleCharacteristic.writeValue(encoder.encode(dataString)).catch(err => console.log(err));
+            });
+        }
+    </script>
+</body>
+</html>
